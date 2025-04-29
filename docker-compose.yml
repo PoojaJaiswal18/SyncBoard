@@ -1,0 +1,32 @@
+version: '3'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: whiteboard-server
+    ports:
+      - "8001:8001"
+      - "1099:1099"
+    networks:
+      - whiteboard-network
+
+  create-client:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    container_name: whiteboard-creator
+    depends_on:
+      - server
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    command: ["java", "-Djava.security.policy=security.policy", "-jar", "create.jar", "server", "8001", "manager"]
+    networks:
+      - whiteboard-network
+
+networks:
+  whiteboard-network:
+    driver: bridge

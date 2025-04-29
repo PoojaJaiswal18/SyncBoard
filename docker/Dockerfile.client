@@ -1,0 +1,10 @@
+FROM openjdk:11-jre-slim
+
+WORKDIR /app
+COPY target/whiteboard-create.jar /app/create.jar
+COPY target/whiteboard-join.jar /app/join.jar
+COPY security.policy /app/
+
+ENV DISPLAY=:0
+
+CMD ["java", "-Djava.security.policy=security.policy", "-jar", "create.jar", "server", "8001", "manager"]

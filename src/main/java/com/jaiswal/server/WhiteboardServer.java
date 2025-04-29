@@ -17,6 +17,7 @@ public class WhiteboardServer implements IRemoteWhiteboard {
     private final String host;
     private final int port;
     private Registry registry;
+    private boolean isRunning = false;
 
     // Store connected clients
     private IRemoteClient managerClient;
@@ -26,21 +27,44 @@ public class WhiteboardServer implements IRemoteWhiteboard {
     private final Map<Integer, IDrawable> canvasState = new ConcurrentHashMap<>();
     private int nextElementId = 1;
 
+    /**
+     * Constructor for WhiteboardServer
+     * @param host The host address to bind to
+     * @param port The port to run on
+     */
     public WhiteboardServer(String host, int port) {
         this.host = host;
         this.port = port;
     }
 
+    /**
+     * Starts the RMI server
+     */
     public void start() {
+        if (isRunning) {
+            System.out.println("Server is already running");
+            return;
+        }
+
         try {
+            // Create and set security policy if it doesn't exist
+            createSecurityPolicyIfNeeded();
+
+            // Set security manager if not already set
+            if (System.getSecurityManager() == null) {
+                System.setSecurityManager(new SecurityManager());
+            }
+
             // Set hostname property
             System.setProperty("java.rmi.server.hostname", host);
 
             // Create registry
             try {
+                System.out.println("Creating RMI registry on port " + port);
                 registry = LocateRegistry.createRegistry(port);
                 System.out.println("RMI registry created on port " + port);
             } catch (RemoteException e) {
+                System.out.println("RMI registry already exists, getting existing registry");
                 registry = LocateRegistry.getRegistry(host, port);
                 System.out.println("RMI registry found on port " + port);
             }
@@ -50,11 +74,38 @@ public class WhiteboardServer implements IRemoteWhiteboard {
 
             // Bind to registry
             registry.rebind("WhiteboardServer", stub);
+            isRunning = true;
 
-            System.out.println("WhiteboardServer is running...");
+            System.out.println("WhiteboardServer is running on " + host + ":" + port);
         } catch (Exception e) {
             System.err.println("Server exception: " + e.toString());
             e.printStackTrace();
+        }
+    }
+
+    /**
+     * Creates a security policy file if it doesn't exist
+     */
+    private void createSecurityPolicyIfNeeded() {
+        try {
+            File securityPolicy = new File("security.policy");
+            if (!securityPolicy.exists()) {
+                try (PrintWriter writer = new PrintWriter(securityPolicy)) {
+                    writer.println("grant {");
+                    writer.println("    permission java.net.SocketPermission \"*:1024-65535\", \"connect,accept,resolve\";");
+                    writer.println("    permission java.net.SocketPermission \"*:80\", \"connect\";");
+                    writer.println("    permission java.net.SocketPermission \"*:8001\", \"connect,accept,resolve\";");
+                    writer.println("    permission java.net.SocketPermission \"*:1099\", \"connect,accept,resolve\";");
+                    writer.println("    permission java.io.FilePermission \"<<ALL FILES>>\", \"read,write,execute,delete\";");
+                    writer.println("    permission java.util.PropertyPermission \"*\", \"read,write\";");
+                    writer.println("    permission java.security.AllPermission;");
+                    writer.println("};");
+                }
+                System.out.println("Created security policy file");
+            }
+            System.setProperty("java.security.policy", securityPolicy.getAbsolutePath());
+        } catch (Exception e) {
+            System.err.println("Error creating security policy: " + e.getMessage());
         }
     }
 
@@ -64,6 +115,7 @@ public class WhiteboardServer implements IRemoteWhiteboard {
 
         // Check if username already exists
         if (clients.containsKey(username)) {
+            System.out.println("Username already exists: " + username);
             return false;
         }
 
@@ -74,7 +126,7 @@ public class WhiteboardServer implements IRemoteWhiteboard {
             System.out.println(username + " joined as manager");
 
             // Update the new manager with current state
-            client.updateCanvas(canvasState);
+            client.updateCanvas(new HashMap<>(canvasState));
             client.updateUserList(new ArrayList<>(clients.keySet()));
             client.joinRequestResult(true);
             return true;
@@ -92,7 +144,7 @@ public class WhiteboardServer implements IRemoteWhiteboard {
             updateAllClientsUserList();
 
             // Update the new client with current canvas state
-            client.updateCanvas(canvasState);
+            client.updateCanvas(new HashMap<>(canvasState));
             client.joinRequestResult(true);
 
             System.out.println(username + " joined as client");
@@ -107,11 +159,12 @@ public class WhiteboardServer implements IRemoteWhiteboard {
     @Override
     public synchronized void disconnect(String username) throws RemoteException {
         if (clients.containsKey(username)) {
+            IRemoteClient client = clients.get(username);
             clients.remove(username);
             System.out.println(username + " disconnected");
 
             // If manager left, close the whiteboard
-            if (managerClient != null && username.equals(getManagerUsername())) {
+            if (client != null && client.equals(managerClient)) {
                 System.out.println("Manager left, closing whiteboard");
                 notifyManagerClosed();
                 // In a real application, you might want to choose a new manager instead
@@ -240,24 +293,37 @@ public class WhiteboardServer implements IRemoteWhiteboard {
 
     // Helper methods
     private void updateAllClientsCanvas() {
-        for (IRemoteClient client : clients.values()) {
+        Map<Integer, IDrawable> stateCopy = new HashMap<>(canvasState);
+        for (Map.Entry<String, IRemoteClient> entry : new HashMap<>(clients).entrySet()) {
             try {
-                client.updateCanvas(canvasState);
+                entry.getValue().updateCanvas(stateCopy);
             } catch (RemoteException e) {
-                System.err.println("Error updating client: " + e.getMessage());
-                // In a real application, you might want to handle disconnected clients
+                System.err.println("Error updating client " + entry.getKey() + ": " + e.getMessage());
+                // Remove disconnected client
+                handleDisconnectedClient(entry.getKey());
             }
         }
     }
 
     private void updateAllClientsUserList() {
         List<String> userList = new ArrayList<>(clients.keySet());
-        for (IRemoteClient client : clients.values()) {
+        for (Map.Entry<String, IRemoteClient> entry : new HashMap<>(clients).entrySet()) {
             try {
-                client.updateUserList(userList);
+                entry.getValue().updateUserList(userList);
             } catch (RemoteException e) {
-                System.err.println("Error updating client user list: " + e.getMessage());
+                System.err.println("Error updating client " + entry.getKey() + " user list: " + e.getMessage());
+                // Remove disconnected client
+                handleDisconnectedClient(entry.getKey());
             }
+        }
+    }
+
+    private void handleDisconnectedClient(String username) {
+        try {
+            clients.remove(username);
+            System.out.println("Removed disconnected client: " + username);
+        } catch (Exception e) {
+            System.err.println("Error removing disconnected client: " + e.getMessage());
         }
     }
 
@@ -277,7 +343,7 @@ public class WhiteboardServer implements IRemoteWhiteboard {
         managerClient = null;
     }
 
-    // Main method to run the server
+    // Main method to run the server directly
     public static void main(String[] args) {
         String host = "localhost";
         int port = 1099;

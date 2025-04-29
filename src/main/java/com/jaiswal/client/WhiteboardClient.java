@@ -5,6 +5,8 @@ import com.jaiswal.shared.*;
 import com.jaiswal.shared.shapes.Shape;
 
 import javax.swing.*;
+import java.io.File;
+import java.io.PrintWriter;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
@@ -61,17 +63,34 @@ public class WhiteboardClient implements IRemoteClient {
      */
     public boolean connect() {
         try {
-            // Set security policy
-            System.setProperty("java.security.policy", "security.policy");
+            // Create and set security policy if it doesn't exist
+            createSecurityPolicyIfNeeded();
 
-            // Modern approach - no SecurityManager needed in newer Java versions
+            // Set security manager
+            if (System.getSecurityManager() == null) {
+                System.setProperty("java.security.policy", new File("security.policy").getAbsolutePath());
+                System.setSecurityManager(new SecurityManager());
+            }
+
+            System.out.println("Connecting to server at " + host + ":" + port);
+
+            // Set important RMI properties
+            System.setProperty("java.rmi.server.hostname", host);
+            System.setProperty("java.rmi.server.useLocalHostname", "true");
+            System.setProperty("java.net.preferIPv4Stack", "true");
 
             // Get registry and lookup the server
             registry = LocateRegistry.getRegistry(host, port);
+
+            // Use the exact registry name the server bound with
             server = (IRemoteWhiteboard) registry.lookup("WhiteboardServer");
+
+            System.out.println("Found server: " + server);
 
             // Export this client
             IRemoteClient stub = (IRemoteClient) UnicastRemoteObject.exportObject(this, 0);
+
+            System.out.println("Requesting to join as " + username + ", manager: " + isManager);
 
             // Request to join
             boolean approved = server.requestJoin(username, stub);
@@ -86,12 +105,38 @@ public class WhiteboardClient implements IRemoteClient {
             }
 
             connected = true;
+            System.out.println("Successfully connected to server");
             return true;
 
         } catch (RemoteException | NotBoundException e) {
             showError("Error connecting to server: " + e.getMessage());
             e.printStackTrace();
             return false;
+        }
+    }
+
+    /**
+     * Creates a security policy file if it doesn't exist
+     */
+    private void createSecurityPolicyIfNeeded() {
+        try {
+            File securityPolicy = new File("security.policy");
+            if (!securityPolicy.exists()) {
+                try (PrintWriter writer = new PrintWriter(securityPolicy)) {
+                    writer.println("grant {");
+                    writer.println("    permission java.net.SocketPermission \"*:1024-65535\", \"connect,accept,resolve\";");
+                    writer.println("    permission java.net.SocketPermission \"*:80\", \"connect\";");
+                    writer.println("    permission java.net.SocketPermission \"*:8001\", \"connect,accept,resolve\";");
+                    writer.println("    permission java.net.SocketPermission \"*:1099\", \"connect,accept,resolve\";");
+                    writer.println("    permission java.io.FilePermission \"<<ALL FILES>>\", \"read,write,execute,delete\";");
+                    writer.println("    permission java.util.PropertyPermission \"*\", \"read,write\";");
+                    writer.println("    permission java.security.AllPermission;");
+                    writer.println("};");
+                }
+                System.out.println("Created security policy file");
+            }
+        } catch (Exception e) {
+            System.err.println("Error creating security policy: " + e.getMessage());
         }
     }
 
@@ -103,6 +148,7 @@ public class WhiteboardClient implements IRemoteClient {
             try {
                 server.disconnect(username);
                 connected = false;
+                System.out.println("Disconnected from server");
             } catch (RemoteException e) {
                 System.err.println("Error disconnecting: " + e.getMessage());
             } finally {
@@ -234,47 +280,63 @@ public class WhiteboardClient implements IRemoteClient {
     // IRemoteClient implementation
     @Override
     public void updateCanvas(Map<Integer, IDrawable> state) throws RemoteException {
-        gui.updateCanvas(state);
+        SwingUtilities.invokeLater(() -> {
+            if (gui != null) {
+                gui.updateCanvas(state);
+            }
+        });
     }
 
     @Override
     public void updateUserList(List<String> users) throws RemoteException {
-        gui.updateUserList(users);
+        SwingUtilities.invokeLater(() -> {
+            if (gui != null) {
+                gui.updateUserList(users);
+            }
+        });
     }
 
     @Override
     public void receiveNotification(String message) throws RemoteException {
         SwingUtilities.invokeLater(() -> {
-            boolean approved = gui.showConfirmDialog(message);
-            try {
-                // In a real application, you would send this approval back to the server
-                // For simplicity, we're auto-approving in the server
-            } catch (Exception e) {
-                showError("Error responding to notification: " + e.getMessage());
+            if (gui != null) {
+                boolean approved = gui.showConfirmDialog(message);
+                try {
+                    // In a real application, you would send this approval back to the server
+                    // For simplicity, we're auto-approving in the server
+                } catch (Exception e) {
+                    showError("Error responding to notification: " + e.getMessage());
+                }
             }
         });
     }
 
     @Override
     public void joinRequestResult(boolean approved) throws RemoteException {
-        if (approved) {
-            showMessage("You have joined the whiteboard.");
-        } else {
-            showError("Your join request was denied.");
-            System.exit(0);
-        }
+        SwingUtilities.invokeLater(() -> {
+            if (approved) {
+                showMessage("You have joined the whiteboard.");
+            } else {
+                showError("Your join request was denied.");
+                System.exit(0);
+            }
+        });
     }
 
     @Override
     public void kickedFromServer() throws RemoteException {
-        showError("You have been kicked from the whiteboard.");
-        System.exit(0);
+        SwingUtilities.invokeLater(() -> {
+            showError("You have been kicked from the whiteboard.");
+            System.exit(0);
+        });
     }
 
     @Override
     public void managerClosedWhiteboard() throws RemoteException {
-        showError("The manager has closed the whiteboard.");
-        System.exit(0);
+        SwingUtilities.invokeLater(() -> {
+            showError("The manager has closed the whiteboard.");
+            System.exit(0);
+        });
     }
 
     @Override
@@ -284,14 +346,22 @@ public class WhiteboardClient implements IRemoteClient {
 
     // Helper methods
     private void showMessage(String message) {
-        SwingUtilities.invokeLater(() ->
-                gui.showNotification(message)
-        );
+        SwingUtilities.invokeLater(() -> {
+            if (gui != null) {
+                gui.showNotification(message);
+            } else {
+                System.out.println("Message: " + message);
+            }
+        });
     }
 
     private void showError(String message) {
-        SwingUtilities.invokeLater(() ->
-                JOptionPane.showMessageDialog(gui, message, "Error", JOptionPane.ERROR_MESSAGE)
-        );
+        SwingUtilities.invokeLater(() -> {
+            if (gui != null) {
+                JOptionPane.showMessageDialog(gui, message, "Error", JOptionPane.ERROR_MESSAGE);
+            } else {
+                System.err.println("Error: " + message);
+            }
+        });
     }
 }

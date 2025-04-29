@@ -1,0 +1,9 @@
+FROM openjdk:11-jre-slim
+
+WORKDIR /app
+COPY target/whiteboard-server.jar /app/
+COPY security.policy /app/
+
+EXPOSE 8001 1099
+
+CMD ["java", "-Djava.rmi.server.hostname=0.0.0.0", "-Djava.security.policy=security.policy", "-jar", "whiteboard-server.jar", "0.0.0.0", "8001"]
