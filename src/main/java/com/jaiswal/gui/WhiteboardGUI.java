@@ -1,31 +1,37 @@
 package com.jaiswal.gui;
 
 import com.jaiswal.client.WhiteboardClient;
+import com.jaiswal.gui.components.CanvasPanel;
+import com.jaiswal.gui.components.StatusBarPanel;
+import com.jaiswal.gui.components.ToolbarPanel;
+import com.jaiswal.gui.components.UserListPanel;
+import com.jaiswal.gui.utils.IconLoader;
+import com.jaiswal.gui.utils.UIConstants;
 import com.jaiswal.shared.IDrawable;
-import com.jaiswal.shared.TextElement;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Graphical user interface for the  whiteboard application.
- * Handles the display of the canvas and user interactions.
+ * Main entry point for the Whiteboard GUI application.
+ * Manages the overall UI structure and coordinates between components.
  */
 public class WhiteboardGUI extends JFrame {
     private final WhiteboardClient client;
     private final boolean isManager;
 
+    // UI Components
     private CanvasPanel canvasPanel;
-    private JList<String> userList;
-    private DefaultListModel<String> userListModel;
-    private JButton kickButton;
+    private UserListPanel userListPanel;
+    private ToolbarPanel toolbarPanel;
+    private StatusBarPanel statusBarPanel;
+
+    // Menu components
+    private JMenuBar menuBar;
 
     /**
      * Constructor for WhiteboardGUI
@@ -36,240 +42,218 @@ public class WhiteboardGUI extends JFrame {
         this.client = client;
         this.isManager = isManager;
 
-        setTitle("Distributed Whiteboard - " + (isManager ? "Manager" : "Client"));
+        setTitle("Collaborative Whiteboard - " + (isManager ? "Manager" : "Participant"));
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setSize(1000, 700);
+        setSize(1200, 800);
         setLocationRelativeTo(null);
 
+        // Set application icon
+        setIconImage(IconLoader.loadIcon("app_icon.png").getImage());
+
+        // Apply look and feel
+        applyLookAndFeel();
+
+        // Initialize and setup all UI components
         initComponents();
         setupLayout();
         setupListeners();
 
+        // Handle window close event
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                client.disconnect();
-                dispose();
-                System.exit(0);
+                exitApplication();
             }
         });
     }
 
     /**
-     * Initialize GUI components
+     * Attempts to set a modern look and feel
+     */
+    private void applyLookAndFeel() {
+        try {
+            // Try to use FlatLaf (comment this out if not using the library)
+            // FlatLightLaf.install();
+
+            // Fallback to system look and feel
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+
+            // Customize UI defaults for a more modern look
+            UIManager.put("Button.arc", 8);
+            UIManager.put("Component.arc", 8);
+            UIManager.put("ProgressBar.arc", 8);
+            UIManager.put("TextComponent.arc", 8);
+
+            // Set global font
+            Font defaultFont = new Font(UIConstants.FONT_FAMILY, Font.PLAIN, UIConstants.FONT_SIZE_NORMAL);
+            UIManager.put("Button.font", defaultFont);
+            UIManager.put("Label.font", defaultFont);
+            UIManager.put("Menu.font", defaultFont);
+            UIManager.put("MenuItem.font", defaultFont);
+            UIManager.put("Panel.font", defaultFont);
+        } catch (Exception e) {
+            System.err.println("Failed to set look and feel: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Initialize all UI components
      */
     private void initComponents() {
-        // Create canvas panel
-        canvasPanel = new CanvasPanel();
-        canvasPanel.setDrawListener(new CanvasPanel.DrawListener() {
-            @Override
-            public void onShapeDrawn(IDrawable shape) {
-                client.drawShape(shape);
-            }
+        // Create all main panels
+        canvasPanel = new CanvasPanel(client);
+        userListPanel = new UserListPanel(client, isManager);
+        toolbarPanel = new ToolbarPanel(canvasPanel);
+        statusBarPanel = new StatusBarPanel();
 
-            @Override
-            public void onTextAdded(TextElement text) {
-                client.drawText(text);
-            }
-        });
+        // Create menu bar
+        menuBar = createMenuBar();
+        setJMenuBar(menuBar);
 
-        canvasPanel.setTextInputListener(location -> {
-            String text = JOptionPane.showInputDialog(WhiteboardGUI.this, "Enter text:");
-            if (text != null && !text.isEmpty()) {
-                canvasPanel.addText(text, location);
-            }
-        });
-
-        // Create user list
-        userListModel = new DefaultListModel<>();
-        userList = new JList<>(userListModel);
-        userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-
-        // Create kick button (only for manager)
-        kickButton = new JButton("Kick User");
-        kickButton.setEnabled(isManager);
-        kickButton.addActionListener(e -> {
-            String selectedUser = userList.getSelectedValue();
-            if (selectedUser != null) {
-                // Extract actual username if it has "(You)" suffix
-                String username = selectedUser;
-                if (username.endsWith(" (You)")) {
-                    username = username.substring(0, username.length() - 6);
-                }
-
-                if (!username.equals(client.getUsernameLocal())) {
-                    client.kickUser(username);
-                } else {
-                    JOptionPane.showMessageDialog(this, "Cannot kick yourself!", "Error", JOptionPane.ERROR_MESSAGE);
-                }
-            } else {
-                JOptionPane.showMessageDialog(this, "Please select a user to kick", "Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        // Set initial status
+        updateStatus("Connected as " + (isManager ? "Manager" : "Participant"));
     }
 
     /**
      * Set up the layout of the GUI components
      */
     private void setupLayout() {
-        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
-        mainPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        // Main container with border layout
+        JPanel mainPanel = new JPanel(new BorderLayout(0, 0));
+        mainPanel.setBackground(UIConstants.BACKGROUND_COLOR);
 
-        // Create toolbar
-        JToolBar toolBar = createToolBar();
-        mainPanel.add(toolBar, BorderLayout.NORTH);
+        // Top area: Toolbar
+        mainPanel.add(toolbarPanel, BorderLayout.NORTH);
 
-        // Add canvas to center
+        // Center area: Canvas inside a scroll pane
         JScrollPane canvasScrollPane = new JScrollPane(canvasPanel);
+        canvasScrollPane.setBorder(BorderFactory.createEmptyBorder());
         canvasScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         canvasScrollPane.getHorizontalScrollBar().setUnitIncrement(16);
-        mainPanel.add(canvasScrollPane, BorderLayout.CENTER);
 
-        // Create sidebar for user list
-        JPanel sidePanel = new JPanel(new BorderLayout(5, 5));
-        sidePanel.setBorder(BorderFactory.createTitledBorder("Users"));
-        sidePanel.add(new JScrollPane(userList), BorderLayout.CENTER);
+        // Right area: User list panel
+        // Add a split pane for resizable layout
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                canvasScrollPane, userListPanel);
+        splitPane.setResizeWeight(0.85); // Give more space to canvas by default
+        splitPane.setContinuousLayout(true);
+        splitPane.setDividerSize(5);
+        splitPane.setBorder(null);
 
-        if (isManager) {
-            JPanel buttonPanel = new JPanel();
-            buttonPanel.add(kickButton);
-            sidePanel.add(buttonPanel, BorderLayout.SOUTH);
-        }
+        mainPanel.add(splitPane, BorderLayout.CENTER);
 
-        sidePanel.setPreferredSize(new Dimension(150, 600));
-        mainPanel.add(sidePanel, BorderLayout.EAST);
-
-        // Create menu bar
-        JMenuBar menuBar = createMenuBar();
-        setJMenuBar(menuBar);
+        // Bottom area: Status bar
+        mainPanel.add(statusBarPanel, BorderLayout.SOUTH);
 
         setContentPane(mainPanel);
     }
 
     /**
-     * Create the toolbar with drawing tools and options
-     * @return The configured toolbar
-     */
-    private JToolBar createToolBar() {
-        JToolBar toolBar = new JToolBar();
-        toolBar.setFloatable(false);
-
-        // Drawing tools
-        String[] tools = {"Line", "Rectangle", "Circle", "Text"};
-        ButtonGroup toolGroup = new ButtonGroup();
-
-        for (String tool : tools) {
-            JToggleButton button = new JToggleButton(tool);
-            button.addActionListener(e -> canvasPanel.setCurrentTool(tool));
-            toolGroup.add(button);
-            toolBar.add(button);
-
-            if (tool.equals("Line")) {  // Select Line by default
-                button.setSelected(true);
-                canvasPanel.setCurrentTool("Line");
-            }
-        }
-
-        toolBar.addSeparator();
-
-        // Color chooser button
-        AtomicReference<Color> currentColor = new AtomicReference<>(Color.BLACK);
-        JButton colorButton = new JButton("Color");
-        colorButton.addActionListener(e -> {
-            Color newColor = JColorChooser.showDialog(this, "Choose Color", currentColor.get());
-            if (newColor != null) {
-                currentColor.set(newColor);
-                canvasPanel.setCurrentColor(newColor);
-            }
-        });
-        toolBar.add(colorButton);
-
-        // Stroke width selector
-        String[] strokeWidths = {"1", "2", "3", "4", "5"};
-        JComboBox<String> strokeCombo = new JComboBox<>(strokeWidths);
-        strokeCombo.setSelectedIndex(1); // Default to 2px
-        strokeCombo.addActionListener(e -> {
-            String selectedItem = (String) strokeCombo.getSelectedItem();
-            if (selectedItem != null) {
-                canvasPanel.setCurrentStrokeWidth(Integer.parseInt(selectedItem));
-            }
-        });
-        toolBar.add(new JLabel(" Width: "));
-        toolBar.add(strokeCombo);
-
-        // Font selector for text
-        AtomicReference<Font> currentFont = new AtomicReference<>(new Font("Arial", Font.PLAIN, 12));
-        JButton fontButton = new JButton("Font");
-        fontButton.addActionListener(e -> {
-            Font selectedFont = FontChooser.showDialog(this, currentFont.get());
-            if (selectedFont != null) {
-                currentFont.set(selectedFont);
-                canvasPanel.setCurrentFont(selectedFont);
-            }
-        });
-        toolBar.add(fontButton);
-
-        // Clear button
-        toolBar.addSeparator();
-        JButton clearButton = new JButton("Clear All");
-        clearButton.addActionListener(e -> client.clearCanvas());
-        toolBar.add(clearButton);
-
-        return toolBar;
-    }
-
-    /**
-     * Create the menu bar
+     * Create the menu bar with File and other menus
      * @return The configured menu bar
      */
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
+        menuBar.setBackground(UIConstants.TOOLBAR_BACKGROUND);
 
-        // Only add File menu for manager
+        // File menu
+        JMenu fileMenu = new JMenu("File");
+        fileMenu.setForeground(UIConstants.TEXT_COLOR);
+
+        // Always add these items
+        JMenuItem newItem = new JMenuItem("New Whiteboard");
+        newItem.setIcon(IconLoader.loadIcon("new.png"));
+        newItem.addActionListener(e -> client.clearCanvas());
+
+        JMenuItem closeItem = new JMenuItem("Exit");
+        closeItem.setIcon(IconLoader.loadIcon("exit.png"));
+        closeItem.addActionListener(e -> exitApplication());
+
+        fileMenu.add(newItem);
+
+        // Only add these menu items for manager
         if (isManager) {
-            JMenu fileMenu = new JMenu("File");
-
-            JMenuItem newItem = new JMenuItem("New");
-            newItem.addActionListener(e -> client.clearCanvas());
-            fileMenu.add(newItem);
-
-            JMenuItem openItem = new JMenuItem("Open");
+            JMenuItem openItem = new JMenuItem("Open...");
+            openItem.setIcon(IconLoader.loadIcon("open.png"));
             openItem.addActionListener(e -> openWhiteboard());
-            fileMenu.add(openItem);
 
             JMenuItem saveItem = new JMenuItem("Save");
+            saveItem.setIcon(IconLoader.loadIcon("save.png"));
             saveItem.addActionListener(e -> saveWhiteboard(false));
-            fileMenu.add(saveItem);
 
-            JMenuItem saveAsItem = new JMenuItem("Save As");
+            JMenuItem saveAsItem = new JMenuItem("Save As...");
+            saveAsItem.setIcon(IconLoader.loadIcon("save_as.png"));
             saveAsItem.addActionListener(e -> saveWhiteboard(true));
+
+            fileMenu.add(openItem);
+            fileMenu.add(new JSeparator());
+            fileMenu.add(saveItem);
             fileMenu.add(saveAsItem);
-
-            fileMenu.addSeparator();
-
-            JMenuItem closeItem = new JMenuItem("Close");
-            closeItem.addActionListener(e -> {
-                client.disconnect();
-                dispose();
-                System.exit(0);
-            });
-            fileMenu.add(closeItem);
-
-            menuBar.add(fileMenu);
         }
+
+        fileMenu.add(new JSeparator());
+        fileMenu.add(closeItem);
+
+        // View menu for all users
+        JMenu viewMenu = new JMenu("View");
+        viewMenu.setForeground(UIConstants.TEXT_COLOR);
+
+        JMenuItem zoomInItem = new JMenuItem("Zoom In");
+        zoomInItem.setIcon(IconLoader.loadIcon("zoom_in.png"));
+        zoomInItem.addActionListener(e -> canvasPanel.zoomIn());
+
+        JMenuItem zoomOutItem = new JMenuItem("Zoom Out");
+        zoomOutItem.setIcon(IconLoader.loadIcon("zoom_out.png"));
+        zoomOutItem.addActionListener(e -> canvasPanel.zoomOut());
+
+        JMenuItem resetZoomItem = new JMenuItem("Reset Zoom");
+        resetZoomItem.setIcon(IconLoader.loadIcon("zoom_reset.png"));
+        resetZoomItem.addActionListener(e -> canvasPanel.resetZoom());
+
+        viewMenu.add(zoomInItem);
+        viewMenu.add(zoomOutItem);
+        viewMenu.add(resetZoomItem);
+
+        // Add menus to menu bar
+        menuBar.add(fileMenu);
+        menuBar.add(viewMenu);
+
+        // Help menu
+        JMenu helpMenu = new JMenu("Help");
+        helpMenu.setForeground(UIConstants.TEXT_COLOR);
+
+        JMenuItem aboutItem = new JMenuItem("About");
+        aboutItem.setIcon(IconLoader.loadIcon("about.png"));
+        aboutItem.addActionListener(e -> showAboutDialog());
+
+        helpMenu.add(aboutItem);
+        menuBar.add(helpMenu);
 
         return menuBar;
     }
 
     /**
-     * Set up event listeners for components
+     * Set up event listeners for global application events
      */
     private void setupListeners() {
-        // Listen for key events
+        // Global keyboard shortcuts
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
-            // Add keyboard shortcuts here if needed
+            // Handle global keyboard shortcuts here
             return false;
         });
+    }
+
+    /**
+     * Shows the about dialog
+     */
+    private void showAboutDialog() {
+        JOptionPane.showMessageDialog(this,
+                "Collaborative Whiteboard Application\n" +
+                        "Version 1.0\n\n" +
+                        "A distributed whiteboard application for real-time collaboration.",
+                "About Whiteboard",
+                JOptionPane.INFORMATION_MESSAGE,
+                IconLoader.loadIcon("app_icon.png"));
     }
 
     /**
@@ -285,13 +269,15 @@ public class WhiteboardGUI extends JFrame {
      * @param users List of users to display
      */
     public void updateUserList(List<String> users) {
-        SwingUtilities.invokeLater(() -> {
-            userListModel.clear();
-            for (String user : users) {
-                userListModel.addElement(user.equals(client.getUsernameLocal()) ?
-                        user + " (You)" : user);
-            }
-        });
+        SwingUtilities.invokeLater(() -> userListPanel.updateUsers(users));
+    }
+
+    /**
+     * Update status bar message
+     * @param message The status message to display
+     */
+    public void updateStatus(String message) {
+        SwingUtilities.invokeLater(() -> statusBarPanel.setStatus(message));
     }
 
     /**
@@ -299,9 +285,13 @@ public class WhiteboardGUI extends JFrame {
      * @param message The message to display
      */
     public void showNotification(String message) {
-        SwingUtilities.invokeLater(() ->
-                JOptionPane.showMessageDialog(this, message, "Notification", JOptionPane.INFORMATION_MESSAGE)
-        );
+        SwingUtilities.invokeLater(() -> {
+            updateStatus(message);
+            JOptionPane.showMessageDialog(this,
+                    message,
+                    "Notification",
+                    JOptionPane.INFORMATION_MESSAGE);
+        });
     }
 
     /**
@@ -310,8 +300,11 @@ public class WhiteboardGUI extends JFrame {
      * @return true if confirmed, false otherwise
      */
     public boolean showConfirmDialog(String message) {
-        return JOptionPane.showConfirmDialog(this, message, "Confirmation",
-                JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION;
+        return JOptionPane.showConfirmDialog(this,
+                message,
+                "Confirmation",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE) == JOptionPane.YES_OPTION;
     }
 
     /**
@@ -319,10 +312,14 @@ public class WhiteboardGUI extends JFrame {
      */
     private void openWhiteboard() {
         JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setFileFilter(new FileNameExtensionFilter("Whiteboard files (*.wb)", "wb"));
+        fileChooser.setDialogTitle("Open Whiteboard");
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "Whiteboard files (*.wb)", "wb"));
 
         if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            client.loadWhiteboard(fileChooser.getSelectedFile().getPath());
+            String path = fileChooser.getSelectedFile().getPath();
+            client.loadWhiteboard(path);
+            updateStatus("Opened whiteboard: " + path);
         }
     }
 
@@ -332,7 +329,9 @@ public class WhiteboardGUI extends JFrame {
      */
     private void saveWhiteboard(boolean saveAs) {
         JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setFileFilter(new FileNameExtensionFilter("Whiteboard files (*.wb)", "wb"));
+        fileChooser.setDialogTitle("Save Whiteboard");
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "Whiteboard files (*.wb)", "wb"));
 
         if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             String path = fileChooser.getSelectedFile().getPath();
@@ -340,6 +339,25 @@ public class WhiteboardGUI extends JFrame {
                 path += ".wb";
             }
             client.saveWhiteboard(path);
+            updateStatus("Saved whiteboard to: " + path);
         }
+    }
+
+    /**
+     * Safely exit the application
+     */
+    private void exitApplication() {
+        // Ask for confirmation if manager
+        if (isManager) {
+            boolean confirm = showConfirmDialog(
+                    "Closing this window will disconnect all users.\nDo you want to continue?");
+            if (!confirm) {
+                return;
+            }
+        }
+
+        client.disconnect();
+        dispose();
+        System.exit(0);
     }
 }

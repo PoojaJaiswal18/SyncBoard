@@ -5,20 +5,29 @@ import com.jaiswal.shared.IDrawable;
 import java.awt.*;
 import java.io.Serializable;
 
+/**
+ * Base class for all drawable shapes in the whiteboard application.
+ */
 public abstract class Shape implements IDrawable, Serializable {
+
+    @java.io.Serial
     private static final long serialVersionUID = 1L;
 
+    // Basic properties common to all shapes
     protected int id;
     protected Color color;
-    protected int strokeWidth;
-    protected Point startPoint;
-    protected Point endPoint;
+    protected float strokeWidth;
 
+    // Constructor for basic shapes like lines, rectangles, and circles
     public Shape(Color color, int strokeWidth, Point startPoint, Point endPoint) {
         this.color = color;
         this.strokeWidth = strokeWidth;
-        this.startPoint = startPoint;
-        this.endPoint = endPoint;
+    }
+
+    // Constructor for complex shapes like freehand that use bounding box parameters
+    public Shape(int x, int y, int width, int height, Color color, float strokeWidth) {
+        this.color = color;
+        this.strokeWidth = strokeWidth;
     }
 
     @Override
@@ -31,20 +40,11 @@ public abstract class Shape implements IDrawable, Serializable {
         this.id = id;
     }
 
-    // Getters and setters
     public Color getColor() {
         return color;
     }
 
-    public int getStrokeWidth() {
+    public float getStrokeWidth() {
         return strokeWidth;
-    }
-
-    public Point getStartPoint() {
-        return startPoint;
-    }
-
-    public Point getEndPoint() {
-        return endPoint;
     }
 }
